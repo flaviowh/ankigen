@@ -9,12 +9,10 @@ from io import BytesIO
 import genanki
 import hashlib
 
-#-------------- Models
-
+#-------------- Model
 class CardType(Enum):
     CLOZE = "FILL"
     SIMPLE = "DEFINITION"
-
 @dataclass
 class Card:
     guid: str                     # deterministic SHA1 hash ID
@@ -23,49 +21,49 @@ class Card:
     answer: str                   # card back
     tags: List[str] = field(default_factory=list)
     
-# ------------- Logic
+
+# ----------------------------- LOGIC -----------------------------
+
 def gen_id_from_text(name: str) -> str:
     return hashlib.sha1(name.encode("utf-8")).hexdigest()[:16]
-
-# ----------------------------- HELPERS -----------------------------
 
 def is_definition_line(line:str) -> bool:
     return len([part for part in line.split(":") if len(part.strip()) > 0 ]) > 1
 
 def is_single_paragraph_fill(lines: List[str]) -> bool:
-        if not lines or len(lines) < 2:
-            return False
-        first_line = lines[0].strip()
-        return all(line.strip() in first_line for line in lines[1:] if line.strip())
+    if not lines or len(lines) < 2:
+        return False
+    first_line = lines[0].strip()
+    return all(line.strip() in first_line for line in lines[1:] if line.strip())
 
 def process_text( 
                 text: str, 
                 gen_definitions: bool,
                 gen_fill: bool, 
-                gen_reverse: bool,
+                gen_class: bool,
                 raw_tags: List[str]):
     lines = text.split("\n")
     tags = [t.replace(" ","_") for t in raw_tags]
     cards = []
     def_lines = []
-    fill_lines = []
+    other_lines = []
     for l in lines:
         if is_definition_line(l):
             def_lines.append(l)
         else:
-            fill_lines.append(l)
+            other_lines.append(l)
             
     if gen_definitions:
-        def_cards = create_def_cards(def_lines, tags, gen_reverse)
+        def_cards = create_def_cards(def_lines, tags)
         cards.extend(def_cards)
         
-    if gen_fill:
-        fill_cards = create_fill_cards(fill_lines, tags, gen_reverse)
+    if gen_fill or gen_class:
+        fill_cards = create_other_cards(other_lines, tags, gen_fill, gen_class)
         cards.extend(fill_cards)
     
     return cards
 
-def create_def_cards(lines: List[str], tags: List[str], include_reverse: bool) -> List[Card]:
+def create_def_cards(lines: List[str], tags: List[str]) -> List[Card]:
         cards = []
         if not lines:
             return cards
@@ -79,12 +77,11 @@ def create_def_cards(lines: List[str], tags: List[str], include_reverse: bool) -
             cards.append(Card( guid="", type=CardType.SIMPLE, 
                     question=f"Define {name}", answer=line,  tags=tags)
         )
-            if include_reverse:
-                cards.append(Card( guid="", type=CardType.SIMPLE, 
-                    question=definition, answer=name, tags=tags))
+            cards.append(Card( guid="", type=CardType.SIMPLE, 
+                question=definition, answer=name, tags=tags))
         return cards 
     
-def split_fill_blocks(lines: List[str]) -> Dict[str, List[str]]:
+def split_blocks(lines: List[str]) -> Dict[str, List[str]]:
     blocks = {}
     cur_block = []
     cur_struct = None
@@ -109,32 +106,34 @@ def split_fill_blocks(lines: List[str]) -> Dict[str, List[str]]:
 
     return blocks
 
-
-def create_fill_cards(lines: List[str], tags: List[str], include_reverse: bool) -> List[Card]:
+def create_other_cards(lines: List[str], tags: List[str], 
+                    generate_fill: bool,
+                    generate_class: bool) -> List[Card]:
     cards = []
     if not lines:
         return cards
 
-    fill_blocks = split_fill_blocks(lines)
+    blocks = split_blocks(lines)
 
-    for struct_name, block in fill_blocks.items():
+    for struct_name, block in blocks.items():
         if not block:
             continue
 
-        cloze_text = block[0]
-        for i, term in enumerate(block[1:], 1):
-            term_clean = " ".join(term.split())
-            cloze_text = cloze_text.replace(term_clean, f"{{{{c{i}::{term_clean}}}}}", 1)
+        if generate_fill:
+            cloze_text = block[0]
+            for i, term in enumerate(block[1:], 1):
+                term_clean = " ".join(term.split())
+                cloze_text = cloze_text.replace(term_clean, f"{{{{c{i}::{term_clean}}}}}", 1)
+                
+            cards.append(Card(
+                guid="",
+                type=CardType.CLOZE,
+                question=cloze_text,
+                answer=cloze_text,
+                tags=tags
+            ))
 
-        cards.append(Card(
-            guid="",
-            type=CardType.CLOZE,
-            question=cloze_text,
-            answer=cloze_text,
-            tags=tags
-        ))
-
-        if include_reverse:
+        if generate_class:
             classification_cards = create_class_cards(block[1:], struct_name, tags)
             cards.extend(classification_cards)
 
@@ -157,53 +156,54 @@ def create_class_cards(items: List[str], struct_name: str, tags: List[str]) -> L
 # ----------------------------- PAGE CONFIG -----------------------------
 st.set_page_config(
     page_title="AnkiGen",
-    page_icon="🧠",
+    page_icon="📚",
     layout="centered",
 )
 
 # ----------------------------- HEADER -----------------------------
 st.markdown("""
 <div style='text-align: center; padding: 1.5rem;'>
-    <h1 style='color: #2C7BE5;'>🧠 AnkiGen</h1>
-    <h3 style='color: #6C757D;'>Generate Anki cards easily</h3>
+    <h1 style='color: #2C7BE5;'>📚 AnkiGen</h1>
+    <h3 style='color: #6C757D;'>Generate Anki cards (no AI)</h3>
 </div>
 """, unsafe_allow_html=True)
 
 # ----------------------------- FORM -----------------------------
 with st.form("anki_form"):
     deck_name = st.text_input("Deck name", placeholder="My Deck", 
-                            help="Reuse a name to update an existing deck created here")
-    text = st.text_area("Paste your card text here", height=250, placeholder=
+                            help="Reuse a name to update a previously generated deck")
+    text = st.text_area("Paste your formatted text here", height=250, placeholder=
                         '''Definitions cards:
 term:definition 
 
 Fill and classification cards:
 [Classification] contains item A, item B, item C
-item A,
-item B (...) ''')
+item A
+item B 
+(...) ''')
     
     tags = st.text_input("Tags", placeholder="tags, separated")
 
+    st.text("Types of cards")
     col1, col2, col3 = st.columns(3)
     with col1:
-        df = st.checkbox("Definition cards", True)
-    with col3:
-        rev = st.checkbox("Reverse cards", help='Create "definition: name" or\n "item belongs to: classification cards"')
+        df = st.checkbox("Definitions", True)
     with col2:
-        fill = st.checkbox("Fill (cloze) cards")
+        rev = st.checkbox("Classifications")
+    with col3:
+        fill = st.checkbox("Blanks to fill")
 
     submitted = st.form_submit_button("📗Generate Anki Deck")
 
 
 # ----------------------------- OUTPUT -----------------------------
 
-def create_apkg(deck_name: str,
-                cards : List[Card] ) -> BytesIO:
+def create_apkg(deck_name: str,cards : List[Card] ) -> BytesIO:
     """Generate an .apkg deck and return it as BytesIO"""
     deck_id = int(hashlib.sha1(deck_name.encode("utf-8")).hexdigest()[:8], 16)
     my_deck = genanki.Deck(deck_id, deck_name)
 
-    # defining genanki models
+    # genanki models
     simple_model = genanki.Model(
             random.getrandbits(62),
             'Basic Model',
@@ -217,26 +217,23 @@ def create_apkg(deck_name: str,
 
     cloze_model = genanki.CLOZE_MODEL
 
-    # Add notes
     for c in cards:
         guid = gen_id_from_text(f"{c.question}||{deck_name}")
         if c.type == CardType.CLOZE:
-            note = genanki.Note(
-                model=cloze_model,
-                fields=[c.question],
-                tags=c.tags,
-                guid=guid
-            )
+            note = genanki.Note(model=cloze_model,
+                                fields=[c.question],
+                                tags=c.tags, 
+                                guid=guid
+                                )
         else:
             note = genanki.Note(
                 model=simple_model,
-                fields=[c.question, c.answer],
-                tags=c.tags,
+                fields=[c.question, c.answer], 
+                tags=c.tags, 
                 guid=guid
-            )
+                )
         my_deck.add_note(note)
 
-    # Export deck into memory
     output = BytesIO()
     pkg = genanki.Package(my_deck)
     pkg.write_to_file(output)
