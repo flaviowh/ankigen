@@ -1,4 +1,3 @@
-import random
 from typing import Dict, List
 import streamlit as st
 from typing import List
@@ -57,9 +56,9 @@ def process_text(
         def_cards = create_def_cards(def_lines, tags)
         cards.extend(def_cards)
         
-    if gen_fill or gen_class:
-        fill_cards = create_other_cards(other_lines, tags, gen_fill, gen_class)
-        cards.extend(fill_cards)
+
+    other_cards = create_other_cards(other_lines, tags, gen_fill, gen_class)
+    cards.extend(other_cards)
     
     return cards
 
@@ -91,7 +90,7 @@ def split_blocks(lines: List[str]) -> Dict[str, List[str]]:
         if not l:
             continue
 
-        match = re.match(r"\[(.+?)\]", l)
+        match =  re.search(r"\[(.+?)\]", l)
         if match:
             if cur_struct and cur_block:
                 blocks[cur_struct] = cur_block
@@ -110,7 +109,7 @@ def create_other_cards(lines: List[str], tags: List[str],
                     generate_fill: bool,
                     generate_class: bool) -> List[Card]:
     cards = []
-    if not lines:
+    if not lines or not any([generate_fill , generate_class]):
         return cards
 
     blocks = split_blocks(lines)
@@ -205,7 +204,7 @@ def create_apkg(deck_name: str,cards : List[Card] ) -> BytesIO:
 
     # genanki models
     simple_model = genanki.Model(
-            random.getrandbits(62),
+            1761428899,
             'Basic Model',
             fields=[{'name': 'Front'}, {'name': 'Back'}],
             templates=[{
