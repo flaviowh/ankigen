@@ -8,6 +8,40 @@ from io import BytesIO
 import genanki
 import hashlib
 
+# ---- INSTRUCTIONS
+
+INPUT_TIP = '''
+📌 How to format your text
+
+1️⃣ Definition cards:
+Write each card as `term: definition` on a single line.
+Example:
+Apple: A fruit that grows on trees
+Python: A programming language
+
+2️⃣ Fill-in-the-blank (cloze) & classification cards:
+Use square brackets to define a category or group.  
+Then list the items below. 
+
+Example 1 – inline items:
+[Ash's Pokemons] contains Pikachu, Bulbasaur, Charmander
+Pikachu
+Bulbasaur
+> Will blank Pikachu and Bulbasaur and create their own classification cards.  
+
+Example 2 – items on separate lines:
+[Ash's Pokemons] contains:
+Pikachu,
+Bulbasaur,
+Charmander
+> Will show the full paragraph with blanks and create a class card each.  
+
+ℹ️Tips:
+- For definition cards, always use a colon `:` to separate term and definition.
+- For fill-in cards, only the items listed below the bracket line will be turned into blanks.
+- Tags can be added in the "Tags" field (separate multiple tags with commas).
+'''
+
 #-------------- Model
 class CardType(Enum):
     CLOZE = "FILL"
@@ -119,18 +153,8 @@ def create_other_cards(lines: List[str], tags: List[str],
             continue
 
         if generate_fill:
-            cloze_text = block[0]
-            for i, term in enumerate(block[1:], 1):
-                term_clean = " ".join(term.split())
-                cloze_text = cloze_text.replace(term_clean, f"{{{{c{i}::{term_clean}}}}}", 1)
-                
-            cards.append(Card(
-                guid="",
-                type=CardType.CLOZE,
-                question=cloze_text,
-                answer=cloze_text,
-                tags=tags
-            ))
+            fill_cards = create_fill_cards(block)
+            cards.extend(fill_cards)
 
         if generate_class:
             classification_cards = create_class_cards(block[1:], struct_name, tags)
@@ -138,6 +162,24 @@ def create_other_cards(lines: List[str], tags: List[str],
 
     return cards
 
+def create_fill_cards(lines_block: List[str]) -> List[Card]:
+    cards = []
+    #generate differntly if the items are within the first line
+    is_single_paragraph = is_single_paragraph_fill(lines_block)
+    
+    cloze_text = lines_block[0] if is_single_paragraph else "\n".join(lines_block) 
+    for i, term in enumerate(lines_block[1:], 1):
+        term_clean = " ".join(term.split())
+        cloze_text = cloze_text.replace(term_clean, f"{{{{c{i}::{term_clean}}}}}", 1)
+    cards.append(Card(
+        guid="",
+        type=CardType.CLOZE,
+        question=cloze_text,
+        answer=cloze_text,
+        tags=tags
+    ))
+        
+    return cards
 
 def create_class_cards(items: List[str], struct_name: str, tags: List[str]) -> List[Card]:
     return [
@@ -171,15 +213,9 @@ st.markdown("""
 with st.form("anki_form"):
     deck_name = st.text_input("Deck name", placeholder="My Deck", 
                             help="Reuse a name to update a previously generated deck")
-    text = st.text_area("Paste your formatted text here", height=250, placeholder=
-                        '''Definitions cards:
-term:definition 
-
-Fill and classification cards:
-[Classification] contains item A, item B, item C
-item A
-item B 
-(...) ''')
+    text = st.text_area("Paste your formatted text here", 
+                        height=250, 
+                        placeholder= INPUT_TIP)
     
     tags = st.text_input("Tags", placeholder="tags, separated")
 
@@ -219,11 +255,12 @@ def create_apkg(deck_name: str,cards : List[Card] ) -> BytesIO:
     for c in cards:
         guid = gen_id_from_text(f"{c.question}||{deck_name}")
         if c.type == CardType.CLOZE:
-            note = genanki.Note(model=cloze_model,
-                                fields=[c.question],
-                                tags=c.tags, 
-                                guid=guid
-                                )
+            note = genanki.Note(
+                model=cloze_model,
+                fields=[c.question],
+                tags=c.tags, 
+                guid=guid
+                )
         else:
             note = genanki.Note(
                 model=simple_model,
@@ -259,3 +296,5 @@ if submitted:
                 file_name=f"{deck_name}.apkg",
                 mime="application/octet-stream",
             )
+
+
