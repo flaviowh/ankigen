@@ -13,13 +13,15 @@ import hashlib
 INPUT_TIP = '''
 📌 How to format your text
 
-1️⃣ Definition cards:
-Write each card as `term: definition` on a single line.
+1️⃣ Direct cards:
+`question || answer` on a single line.
+
+2️⃣ Definition cards:
+`term: definition` on a single line.
 Example:
 Apple: A fruit that grows on trees
-Python: A programming language
 
-2️⃣ Fill-in-the-blank (cloze) & classification cards:
+3️⃣ Fill-in-the-blank (cloze) & classification cards:
 Use square brackets to define a category or group.  
 Then list the items below. 
 
@@ -44,8 +46,10 @@ Charmander
 
 #-------------- Model
 class CardType(Enum):
-    CLOZE = "FILL"
-    SIMPLE = "DEFINITION"
+    FILL = "FILL"
+    DIRECT = "SIMPLE"
+    CLASSIFICATION = "CLASSIFICATION"
+    DEFINITION =  "DEFINITION"
 @dataclass
 class Card:
     guid: str                     # deterministic SHA1 hash ID
@@ -63,6 +67,9 @@ def gen_id_from_text(name: str) -> str:
 def is_definition_line(line:str) -> bool:
     return len([part for part in line.split(":") if len(part.strip()) > 0 ]) > 1
 
+def is_direct_line(line: str) -> bool:
+    return "||" in line
+
 def is_single_paragraph_fill(lines: List[str]) -> bool:
     if not lines or len(lines) < 2:
         return False
@@ -77,23 +84,38 @@ def process_text(
                 raw_tags: List[str]):
     lines = text.split("\n")
     tags = [t.replace(" ","_") for t in raw_tags]
+    direct_lines = []
     cards = []
     def_lines = []
     other_lines = []
     for l in lines:
-        if is_definition_line(l):
+        if is_direct_line(l):
+            direct_lines.append(l)
+        elif is_definition_line(l):
             def_lines.append(l)
         else:
             other_lines.append(l)
+            
+    direct_cards = create_direct_cards(direct_lines, tags)
+    cards.extend(direct_cards)
             
     if gen_definitions:
         def_cards = create_def_cards(def_lines, tags)
         cards.extend(def_cards)
         
 
-    other_cards = create_other_cards(other_lines, tags, gen_fill, gen_class)
+    other_cards = create_fill_and_classification_cards(other_lines, tags, gen_fill, gen_class)
     cards.extend(other_cards)
     
+    return cards
+
+def create_direct_cards(lines: List[str], tags: List[str]) -> List[Card]:
+    cards = []
+    for l in lines:
+        parts = [part.strip() for part in l.split("||", 1)]
+        if len(parts) < 2:
+            continue
+        cards.append(Card(guid="", type=CardType.DIRECT, question=parts[0], answer=parts[1], tags=tags))
     return cards
 
 def create_def_cards(lines: List[str], tags: List[str]) -> List[Card]:
@@ -107,10 +129,10 @@ def create_def_cards(lines: List[str], tags: List[str]) -> List[Card]:
                 continue
             name = parts[0]
             definition = parts[1]
-            cards.append(Card( guid="", type=CardType.SIMPLE, 
+            cards.append(Card( guid="", type=CardType.DEFINITION, 
                     question=f"Define {name}", answer=line,  tags=tags)
         )
-            cards.append(Card( guid="", type=CardType.SIMPLE, 
+            cards.append(Card( guid="", type=CardType.DEFINITION, 
                 question=definition, answer=name, tags=tags))
         return cards 
     
@@ -139,7 +161,7 @@ def split_blocks(lines: List[str]) -> Dict[str, List[str]]:
 
     return blocks
 
-def create_other_cards(lines: List[str], tags: List[str], 
+def create_fill_and_classification_cards(lines: List[str], tags: List[str], 
                     generate_fill: bool,
                     generate_class: bool) -> List[Card]:
     cards = []
@@ -173,7 +195,7 @@ def create_fill_cards(lines_block: List[str]) -> List[Card]:
         cloze_text = cloze_text.replace(term_clean, f"{{{{c{i}::{term_clean}}}}}", 1)
     cards.append(Card(
         guid="",
-        type=CardType.CLOZE,
+        type=CardType.FILL,
         question=cloze_text,
         answer=cloze_text,
         tags=tags
@@ -185,7 +207,7 @@ def create_class_cards(items: List[str], struct_name: str, tags: List[str]) -> L
     return [
         Card(
             guid="",
-            type=CardType.SIMPLE,
+            type=CardType.CLASSIFICATION,
             question=item,
             answer=struct_name,
             tags=tags
@@ -205,21 +227,21 @@ st.set_page_config(
 st.markdown("""
 <div style='text-align: center; padding: 1.5rem;'>
     <h1 style='color: #2C7BE5;'>📚 AnkiGen</h1>
-    <h3 style='color: #6C757D;'>Generate Anki cards (no AI)</h3>
+    <h3 style='color: #6C757D;'>Create Anki cards faster (no AI)</h3>
 </div>
 """, unsafe_allow_html=True)
 
 # ----------------------------- FORM -----------------------------
 with st.form("anki_form"):
     deck_name = st.text_input("Deck name", placeholder="My Deck", 
-                            help="Reuse a name to update a previously generated deck")
+                            help="Reuse a name to update a previously created deck")
     text = st.text_area("Paste your formatted text here", 
                         height=250, 
                         placeholder= INPUT_TIP)
     
     tags = st.text_input("Tags", placeholder="tags, separated")
 
-    st.text("Types of cards")
+    st.text("Include cards")
     col1, col2, col3 = st.columns(3)
     with col1:
         df = st.checkbox("Definitions", True)
@@ -254,7 +276,7 @@ def create_apkg(deck_name: str,cards : List[Card] ) -> BytesIO:
 
     for c in cards:
         guid = gen_id_from_text(f"{c.question}||{deck_name}")
-        if c.type == CardType.CLOZE:
+        if c.type == CardType.FILL:
             note = genanki.Note(
                 model=cloze_model,
                 fields=[c.question],
@@ -285,10 +307,10 @@ if submitted:
         num_cards = len(cards)
 
         if num_cards == 0:
-            st.warning("No cards were generated. Please check your input.")
+            st.warning("No cards were created. Please check your input.")
         else:
             apkg_file = create_apkg(deck_name, cards)
-            st.success(f"✅ Deck '{deck_name}' generated with {num_cards} cards!")
+            st.success(f"✅ Deck '{deck_name}' created with {num_cards} cards!")
 
             st.download_button(
                 label="💾 Download .apkg",
