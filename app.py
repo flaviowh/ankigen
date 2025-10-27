@@ -13,15 +13,10 @@ import hashlib
 INPUT_TIP = '''
 📌 How to format your text
 
-1️⃣ Direct cards:
-`question || answer` on a single line.
+1️⃣ Direct or definition cards:
+`question || answer` or `term : definition` on a single line.
 
-2️⃣ Definition cards:
-`term: definition` on a single line.
-Example:
-Apple: A fruit that grows on trees
-
-3️⃣ Fill-in-the-blank (cloze) & classification cards:
+2️⃣ Fill-in-the-blank (cloze) or classification cards:
 Use square brackets to define a category or group.  
 Then list the items below. 
 
@@ -39,7 +34,7 @@ Charmander
 > Will show the full paragraph with blanks and create a class card each.  
 
 ℹ️Tips:
-- For definition cards, always use a colon `:` to separate term and definition.
+- Definitions are lines separated by colon ":" and create 2 cards (both ways)
 - For fill-in cards, only the items listed below the bracket line will be turned into blanks.
 - Tags can be added in the "Tags" field (separate multiple tags with commas).
 '''
@@ -49,7 +44,7 @@ class CardType(Enum):
     FILL = "FILL"
     DIRECT = "SIMPLE"
     CLASSIFICATION = "CLASSIFICATION"
-    DEFINITION =  "DEFINITION"
+
 @dataclass
 class Card:
     guid: str                     # deterministic SHA1 hash ID
@@ -64,11 +59,10 @@ class Card:
 def gen_id_from_text(name: str) -> str:
     return hashlib.sha1(name.encode("utf-8")).hexdigest()[:16]
 
-def is_definition_line(line:str) -> bool:
-    return len([part for part in line.split(":") if len(part.strip()) > 0 ]) > 1
+def is_direct_or_DIRECT_line(line: str) -> bool:
+    # Detect lines with ":" or "||" as separators, but not at edges
+    return bool(re.search(r'\S\s*(?:\|\||:)\s*\S', line))
 
-def is_direct_line(line: str) -> bool:
-    return "||" in line
 
 def is_single_paragraph_fill(lines: List[str]) -> bool:
     if not lines or len(lines) < 2:
@@ -78,7 +72,6 @@ def is_single_paragraph_fill(lines: List[str]) -> bool:
 
 def process_text( 
                 text: str, 
-                gen_definitions: bool,
                 gen_fill: bool, 
                 gen_class: bool,
                 raw_tags: List[str]):
@@ -86,55 +79,52 @@ def process_text(
     tags = [t.replace(" ","_") for t in raw_tags]
     direct_lines = []
     cards = []
-    def_lines = []
     other_lines = []
     for l in lines:
-        if is_direct_line(l):
+        if is_direct_or_DIRECT_line(l):
             direct_lines.append(l)
-        elif is_definition_line(l):
-            def_lines.append(l)
         else:
             other_lines.append(l)
             
     direct_cards = create_direct_cards(direct_lines, tags)
     cards.extend(direct_cards)
             
-    if gen_definitions:
-        def_cards = create_def_cards(def_lines, tags)
-        cards.extend(def_cards)
-        
-
     other_cards = create_fill_and_classification_cards(other_lines, tags, gen_fill, gen_class)
     cards.extend(other_cards)
     
     return cards
 
-def create_direct_cards(lines: List[str], tags: List[str]) -> List[Card]:
-    cards = []
-    for l in lines:
-        parts = [part.strip() for part in l.split("||", 1)]
-        if len(parts) < 2:
-            continue
-        cards.append(Card(guid="", type=CardType.DIRECT, question=parts[0], answer=parts[1], tags=tags))
-    return cards
 
-def create_def_cards(lines: List[str], tags: List[str]) -> List[Card]:
+def create_direct_cards(lines: List[str], tags: List[str]) -> List[Card]:
         cards = []
         if not lines:
             return cards
         
         for line in lines:
-            parts = [part.strip() for part in line.split(":", 1)]
-            if len(parts) < 2:
+            parts = split_direct_line(lines)
+            if not parts or len(parts) < 2:
                 continue
-            name = parts[0]
-            definition = parts[1]
-            cards.append(Card( guid="", type=CardType.DEFINITION, 
-                    question=f"Define {name}", answer=line,  tags=tags)
-        )
-            cards.append(Card( guid="", type=CardType.DEFINITION, 
-                question=definition, answer=name, tags=tags))
+            
+            is_definition = not "||" in line
+            front, back = parts
+            cards.append(Card( guid="", type=CardType.DIRECT, 
+                    question=f"Define {front}" if is_definition else front,
+                    answer=line,  tags=tags)
+        )   # also make a definition -> name card
+            if is_definition:
+                cards.append(Card( guid="", type=CardType.DIRECT, 
+                    question=back, answer=front, tags=tags))
+                
         return cards 
+
+
+def split_direct_line(line: str) -> tuple[str, str] | None:
+    for sep in ("||", ":"):
+        if sep in line:
+            front, back = map(str.strip, line.split(sep, 1))
+            return front, back
+    return None
+
     
 def split_blocks(lines: List[str]) -> Dict[str, List[str]]:
     blocks = {}
@@ -241,13 +231,11 @@ with st.form("anki_form"):
     
     tags = st.text_input("Tags", placeholder="tags, separated")
 
-    st.text("Include cards")
-    col1, col2, col3 = st.columns(3)
+    st.text("Create from paragraphs:")
+    col1, col2= st.columns(2, gap="small")
     with col1:
-        df = st.checkbox("Definitions", True)
-    with col2:
         rev = st.checkbox("Classifications")
-    with col3:
+    with col2:
         fill = st.checkbox("Blanks to fill")
 
     submitted = st.form_submit_button("📗Generate Anki Deck")
@@ -303,7 +291,7 @@ if submitted:
     if not text.strip():
         st.warning("Please enter the formatted text first.")
     else:
-        cards = process_text(text, df, fill, rev, tags.split(","))
+        cards = process_text(text,fill, rev, tags.split(","))
         num_cards = len(cards)
 
         if num_cards == 0:
