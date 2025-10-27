@@ -42,12 +42,11 @@ Charmander
 #-------------- Model
 class CardType(Enum):
     FILL = "FILL"
-    DIRECT = "SIMPLE"
+    DIRECT = "DIRECT"
     CLASSIFICATION = "CLASSIFICATION"
 
 @dataclass
 class Card:
-    guid: str                     # deterministic SHA1 hash ID
     type: CardType                # card type
     question: str                 # card front
     answer: str                   # card back
@@ -59,8 +58,8 @@ class Card:
 def gen_id_from_text(name: str) -> str:
     return hashlib.sha1(name.encode("utf-8")).hexdigest()[:16]
 
-def is_direct_or_DIRECT_line(line: str) -> bool:
-    # Detect lines with ":" or "||" as separators, but not at edges
+def is_direct_line(line: str) -> bool:
+    # Detect lines with ":" or "||" as separators
     return bool(re.search(r'\S\s*(?:\|\||:)\s*\S', line))
 
 
@@ -81,7 +80,7 @@ def process_text(
     cards = []
     other_lines = []
     for l in lines:
-        if is_direct_or_DIRECT_line(l):
+        if is_direct_line(l):
             direct_lines.append(l)
         else:
             other_lines.append(l)
@@ -107,12 +106,12 @@ def create_direct_cards(lines: List[str], tags: List[str]) -> List[Card]:
             
             is_definition = not "||" in line
             front, back = parts
-            cards.append(Card( guid="", type=CardType.DIRECT, 
+            cards.append(Card(type=CardType.DIRECT, 
                     question=f"Define {front}" if is_definition else front,
                     answer=line,  tags=tags)
         )   # also make a definition -> name card
             if is_definition:
-                cards.append(Card( guid="", type=CardType.DIRECT, 
+                cards.append(Card( type=CardType.DIRECT, 
                     question=back, answer=front, tags=tags))
                 
         return cards 
@@ -165,11 +164,13 @@ def create_fill_and_classification_cards(lines: List[str], tags: List[str],
             continue
 
         if generate_fill:
-            fill_cards = create_fill_cards(block, tags)
+            fill_cards =  create_fill_cards(block, tags)
             cards.extend(fill_cards)
 
         if generate_class:
-            classification_cards = create_class_cards(block[1:], struct_name, tags)
+            classification_cards = [Card(type=CardType.CLASSIFICATION,
+                                    question=item,answer=struct_name,tags=tags)
+                                    for item in block[1:] if item]
             cards.extend(classification_cards)
 
     return cards
@@ -184,7 +185,6 @@ def create_fill_cards(lines_block: List[str], tags) -> List[Card]:
         term_clean = " ".join(term.split())
         cloze_text = cloze_text.replace(term_clean, f"{{{{c{i}::{term_clean}}}}}", 1)
     cards.append(Card(
-        guid="",
         type=CardType.FILL,
         question=cloze_text,
         answer=cloze_text,
@@ -193,18 +193,6 @@ def create_fill_cards(lines_block: List[str], tags) -> List[Card]:
         
     return cards
 
-def create_class_cards(items: List[str], struct_name: str, tags: List[str]) -> List[Card]:
-    return [
-        Card(
-            guid="",
-            type=CardType.CLASSIFICATION,
-            question=item,
-            answer=struct_name,
-            tags=tags
-        )
-        for item in items
-    ]       
-        
         
 # ----------------------------- PAGE CONFIG -----------------------------
 st.set_page_config(
