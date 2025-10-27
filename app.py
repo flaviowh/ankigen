@@ -175,7 +175,7 @@ def create_fill_and_classification_cards(lines: List[str], tags: List[str],
             continue
 
         if generate_fill:
-            fill_cards = create_fill_cards(block)
+            fill_cards = create_fill_cards(block, tags)
             cards.extend(fill_cards)
 
         if generate_class:
@@ -184,9 +184,9 @@ def create_fill_and_classification_cards(lines: List[str], tags: List[str],
 
     return cards
 
-def create_fill_cards(lines_block: List[str]) -> List[Card]:
+def create_fill_cards(lines_block: List[str], tags) -> List[Card]:
     cards = []
-    #generate differntly if the items are within the first line
+    #generate differently if the items are within the first line
     is_single_paragraph = is_single_paragraph_fill(lines_block)
     
     cloze_text = lines_block[0] if is_single_paragraph else "\n".join(lines_block) 
