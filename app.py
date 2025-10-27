@@ -101,7 +101,7 @@ def create_direct_cards(lines: List[str], tags: List[str]) -> List[Card]:
             return cards
         
         for line in lines:
-            parts = split_direct_line(lines)
+            parts = split_direct_line(line)
             if not parts or len(parts) < 2:
                 continue
             
